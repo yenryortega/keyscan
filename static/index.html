@@ -263,6 +263,28 @@ select.input{appearance:none;background-image:linear-gradient(45deg,transparent 
 .ci-photo img{width:64px;height:64px;object-fit:cover;border-radius:10px;border:1px solid var(--line)}
 .check{display:flex;align-items:center;gap:10px;min-height:44px;font-weight:600;font-size:15px}
 .check input{width:22px;height:22px;accent-color:var(--signal)}
+.pick-list{display:flex;flex-direction:column;gap:10px}
+.pick-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+@media(min-width:520px){.pick-grid{grid-template-columns:repeat(3,minmax(0,1fr))}}
+.ptile{position:relative;display:flex;flex-direction:column;border:2px solid var(--line);border-radius:14px;overflow:hidden;background:var(--slab2);cursor:pointer}
+.ptile input{position:absolute;opacity:0;pointer-events:none}
+.ptile .img{height:130px;display:flex;align-items:center;justify-content:center;background:var(--night)}
+.ptile .img img{width:100%;height:100%;object-fit:cover;display:block}
+.ptile .img .ic{font-size:44px}
+.ptile .cap{padding:8px 10px;display:flex;flex-direction:column;min-width:0}
+.ptile .cap b{font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ptile .cap small{color:var(--mist);font-size:12px}
+.ptile .tick{position:absolute;top:8px;left:8px;width:28px;height:28px;border-radius:50%;border:2px solid #fff;background:rgba(0,0,0,.35);
+  color:transparent;display:flex;align-items:center;justify-content:center;font-weight:800}
+.ptile .zoom{position:absolute;top:8px;right:8px;width:34px;height:34px;border-radius:50%;border:none;background:rgba(0,0,0,.55);font-size:15px;cursor:pointer}
+.ptile:has(input:checked){border-color:var(--signal)}
+.ptile:has(input:checked) .tick{background:var(--signal);border-color:var(--signal);color:#fff}
+.lightbox{position:fixed;inset:0;z-index:110;background:rgba(3,8,12,.94);display:flex;flex-direction:column;align-items:center;justify-content:center;padding:20px;gap:12px}
+.lightbox img{max-width:100%;max-height:80vh;max-height:80dvh;border-radius:12px;object-fit:contain}
+.lightbox p{margin:0;color:var(--mist);font-size:14px;text-align:center}
+.lightbox .sheet-x{position:absolute;top:16px;right:16px;float:none;margin:0}
+.pick-head{margin-top:6px;padding-bottom:4px;border-bottom:1px solid var(--line)}
+.pick-head b{font-family:var(--display);font-size:18px;letter-spacing:.8px;text-transform:uppercase}
 .dest{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
 .dest select{flex:1;min-width:150px}
 .kinds{display:flex;flex-wrap:wrap;gap:8px}
@@ -550,7 +572,11 @@ const guestOf = r => r && r.status!=="checked_out" ? (r.guest_name||"") : "";
 function normCode(s){ return String(s??"").toUpperCase().replace(/[^A-Z0-9]/g,""); }
 const stInfo = k => STATUS[k] || {label:String(k||"Unknown"), c:"var(--st-attention)"};
 const catInfo = k => CATS[k] || CATS.other;
-const eqLabel = e => catInfo(e.category).label+(e.kids?" (kids)":"");
+const eqLabel = e => catInfo(e.category).label+(e.kids?" (kids)":"")+(e.owner?" · "+e.owner:"");
+/* names already given to this room's items: offered again so a family's names stay consistent */
+const ownersOfRoom = (roomId,extra=[]) => [...new Set([...extra,...storagesOfRoom(roomId).flatMap(s=>eqOf(s.id)).map(e=>e.owner)]
+  .map(x=>String(x||"").trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b));
+const ownerList = (id,names) => `<datalist id="${id}">${names.map(n=>`<option value="${esc(n)}">`).join("")}</datalist>`;
 
 /* --- storage kinds and automatic assignment --- */
 function kindFromName(n){
@@ -1196,7 +1222,8 @@ VIEWS.stow = (p) => {
   const r = room(p.room_id);
   if(p.room_id && !r) return {title:"Check in", body:`<div class="empty">This room no longer exists.</div>`};
   if(r && d.vip===false && r.vip && r.status!=="checked_out") d.vip=true;
-  return {title:"Check in", sub:r?"Room "+esc(r.room_number):"By room number",
+  const adding = r && storagesOfRoom(r.id).length>0;     // room already checked in: this adds items
+  return {title:adding?"Add equipment":"Check in", sub:r?"Room "+esc(r.room_number):"By room number",
   body:`
     ${r?`<div class="panel"><div class="row between"><b class="num" style="font-size:30px">Room ${esc(r.room_number)}</b>
         ${storagesOfRoom(r.id).length?`<span class="chip">${storagesOfRoom(r.id).length} stored</span>`:""}</div>
@@ -1216,7 +1243,7 @@ VIEWS.stow = (p) => {
     </div>
     <div class="hint">One line per item: a pair of boots, a pair of skis with their poles, one snowboard. Take its photo and check the storage — the first free one of its area is suggested.</div>
     <div class="btn-grid one" style="margin-top:18px">
-      <button class="btn go" data-act="ci-save" id="ciSave">Check in</button>
+      <button class="btn go" data-act="ci-save" id="ciSave">${adding?"Add to room":"Check in"}</button>
       ${r?"":`<button class="btn ghost" data-act="scan" data-ctx="checkin">Have the key card? Scan it</button>`}
     </div>
     <div class="hint">${r?"":"The key card is optional — add it later from the room page whenever the guest has it."}
@@ -1230,7 +1257,7 @@ VIEWS.stow = (p) => {
     if(!r && !d.room) setTimeout(()=>$("#ciRoom")?.focus(),80);
   }};
 };
-const newItem = k => ({key:uid(), category:k, kids:false, size:"", note:"", storage_id:null, photo:null, photo_id:null});
+const newItem = k => ({key:uid(), category:k, kids:false, owner:"", size:"", note:"", storage_id:null, photo:null, photo_id:null});
 const stowParams = () => current().view==="stow" ? current().params : null;
 function roomHint(){
   const el=$("#ciRoomHint"), d=stowParams()?.d; if(!el||!d) return;
@@ -1242,7 +1269,9 @@ function drawItems(){
   const p=stowParams(), box=$("#ciItems"); if(!p||!box) return;
   const d=p.d; autoAssign(d.items,d.vip);
   const freeAll=DB.storages.filter(isFree).sort(byNumber);
-  box.innerHTML = d.items.map((i,n)=>{
+  const r=room(p.room_id)||(d.room.trim()?roomByNumber(d.room):null);
+  const names=r?ownersOfRoom(r.id,d.items.map(i=>i.owner)):[...new Set(d.items.map(i=>String(i.owner||"").trim()).filter(Boolean))];
+  box.innerHTML = ownerList("ciOwners",names) + d.items.map((i,n)=>{
     const c=catInfo(i.category), dest=stor(i.storage_id||i.auto);
     const free=freeAll.filter(s=>fitsItem(i,s,d.vip)), areas=[...new Set(free.map(s=>s.section||"Unassigned area"))];
     const want=kindsFor(i,false).map(k=>KINDS[k]).join(" / ");
@@ -1250,6 +1279,7 @@ function drawItems(){
     return `<div class="ci-item" data-key="${i.key}">
       <div class="hd"><span style="font-size:22px">${c.ic}</span><b>${esc(c.label)}</b>
         <button class="btn sm ghost" data-act="ci-del" data-key="${i.key}" aria-label="Remove">✕</button></div>
+      <input class="input" data-ci="owner" value="${esc(i.owner||"")}" list="ciOwners" placeholder="Whose is it? e.g. Maria, Dad, red jacket" autocomplete="off" style="margin-bottom:8px">
       ${!d.vip&&(i.category==="skis"||i.category==="snowboard")?`<label class="check"><input type="checkbox" data-ci="kids" ${i.kids?"checked":""}> Kids use — goes to the Kids area</label>`:""}
       <div class="ci-photo">
         ${i.photo?`<img src="${i.photo}" alt="" data-act="ci-cam" data-key="${i.key}" style="cursor:pointer">`:""}
@@ -1292,7 +1322,7 @@ async function stowSave(){
   try{
     // photos first: if an upload fails nothing has changed yet (done ones are not sent twice)
     for(const i of d.items) if(i.photo && !i.photo_id){ if(btn) btn.textContent="Uploading photos…"; i.photo_id=await uploadPhoto(i.photo); }
-  }catch(err){ toast(err.message,"err"); busy=false; if(btn){ btn.disabled=false; btn.textContent="Check in"; } return; }
+  }catch(err){ toast(err.message,"err"); busy=false; if(btn){ btn.disabled=false; btn.textContent=r&&storagesOfRoom(r.id).length?"Add to room":"Check in"; } return; }
   busy=false;
   // another device may have taken a location meanwhile
   const gone=d.items.find(i=>{ const s=stor(i.storage_id||i.auto); return !s || !isFree(s); });
@@ -1306,6 +1336,7 @@ async function stowSave(){
     const e={id:uid(),storage_id:s.id,category:i.category,description:"",quantity:1,size:"",type:"",
       status:"stored",created_at:now(),updated_at:now()};
     if(i.kids && !d.vip) e.kids=true;
+    if(String(i.owner||"").trim()) e.owner=String(i.owner).trim();
     if(i.photo_id) e.photo_id=i.photo_id;
     DB.equipment.push(e);
     setStorageStatus(s,"occupied","Check-in");
@@ -1432,6 +1463,8 @@ function openEqSheet(storageId, editId){
     <p class="sub">Storage ${esc(stor(+storageId)?.storage_number||"—")}</p>
     <label class="f"><span>Category</span>
       <select class="input" id="eCat">${cats.map(k=>`<option value="${k}" ${k===cat?"selected":""}>${CATS[k].ic}  ${CATS[k].label}</option>`).join("")}</select></label>
+    <label class="f"><span>Whose is it? (optional)</span><input class="input" id="eOwner" value="${esc(e&&e.owner||"")}" list="eqOwners" placeholder="e.g. Maria, Dad, red jacket" autocomplete="off"></label>
+    ${ownerList("eqOwners",stor(+storageId)?.room_id?ownersOfRoom(stor(+storageId).room_id):[])}
     <label class="check"><input type="checkbox" id="eKids" ${(e?e.kids:kindOf(stor(+storageId))==="ski_kids")?"checked":""}> Kids use</label>
     <div class="ci-photo">
       <img id="eqPhotoImg" class="${e&&e.photo_id?"":"hidden"}" src="${e&&e.photo_id?photoUrl(e.photo_id):""}" alt="">
@@ -1449,7 +1482,7 @@ function eqCamera(){
 }
 async function saveEq(storageId,editId){
   if(busy) return;
-  const cat=$("#eCat").value, kids=!!$("#eKids")?.checked;
+  const cat=$("#eCat").value, kids=!!$("#eKids")?.checked, owner=($("#eOwner")?.value||"").trim();
   if(!stor(+storageId)){ toast("That storage no longer exists","err"); closeSheet(); render(); return; }
   const fit=catsForStorage(stor(+storageId));
   if(fit && !fit.includes(cat) && !(editId && DB.equipment.find(x=>x.id===+editId)?.category===cat)){
@@ -1461,11 +1494,13 @@ async function saveEq(storageId,editId){
   if(editId){ const e=DB.equipment.find(x=>x.id===+editId); if(!e){ closeSheet(); render(); return; }
     Object.assign(e,{category:cat,updated_at:now()});
     if(kids) e.kids=true; else delete e.kids;
+    if(owner) e.owner=owner; else delete e.owner;
     if(photo_id) e.photo_id=photo_id;
     log(photo_id?"Equipment photo added":"Equipment updated",{storage_id:e.storage_id,room_id:stor(e.storage_id)?.room_id,equipment_id:e.id,photo_id,notes:`${eqLabel(e)} ×${e.quantity}`});
   }else{
     const e={id:uid(),storage_id:+storageId,category:cat,description:"",quantity:1,size:"",type:"",status:"stored",created_at:now(),updated_at:now()};
     if(kids) e.kids=true;
+    if(owner) e.owner=owner;
     if(photo_id) e.photo_id=photo_id;
     DB.equipment.push(e);
     log("Equipment added",{storage_id:e.storage_id,room_id:stor(e.storage_id).room_id,equipment_id:e.id,photo_id,notes:`${eqLabel(e)} ×1`});
@@ -1672,7 +1707,7 @@ VIEWS.room = (p) => {
     </div>
 
     <div class="btn-grid" style="margin-top:12px">
-      <button class="btn primary" data-act="nav-stow" data-room="${r.id}" style="grid-column:1/-1">Check in equipment</button>
+      <button class="btn ${sts.length?"":"primary"}" data-act="nav-stow" data-room="${r.id}" style="grid-column:1/-1">${sts.length?"+ Add more equipment":"Check in equipment"}</button>
       ${out.length?`<button class="btn go" data-act="room-return" data-id="${r.id}" style="grid-column:1/-1">Return equipment · ${out.length}</button>`:""}
       ${inHall.length?`<button class="btn" data-act="room-hand" data-id="${r.id}" style="grid-column:1/-1">Hand to guest · ${inHall.length}</button>`:""}
       ${sts.length?`<button class="btn go" data-act="room-out" data-id="${r.id}" style="grid-column:1/-1">Check out &amp; release all</button>`:""}
@@ -1713,16 +1748,54 @@ function doEditRoom(id){
   r.updated_at=now(); log("Room updated",{room_id:r.id,notes:[r.guest_name,r.departure,r.vip?"VIP":""].filter(Boolean).join(" · ")});
   save(); closeSheet(); toast("Room updated"); render();
 }
+/* a family may come one at a time: the valet ticks the locations that go now
+   (nothing is ticked at first, unless there is only one) */
+const ownerOf = s => String(eqOf(s.id).map(e=>e.owner).find(Boolean)||"").trim();
+const pickList = sts => {
+  const groups=new Map();
+  [...sts].sort((a,b)=>(ownerOf(a)?0:1)-(ownerOf(b)?0:1)||ownerOf(a).localeCompare(ownerOf(b))||byNumber(a,b))
+    .forEach(s=>{ const o=ownerOf(s); if(!groups.has(o)) groups.set(o,[]); groups.get(o).push(s); });
+  const named=[...groups.keys()].some(Boolean);
+  return `<div class="pick-list">${[...groups].map(([o,list])=>`
+    ${named?`<div class="row between pick-head"><b>${o?esc(o):"No name"}</b>
+      <button class="btn sm" style="width:auto" data-act="pick-owner" data-ids="${list.map(s=>s.id).join(",")}">Select ${o?esc(o)+"’s":"these"}</button></div>`:""}
+    <div class="pick-grid">${list.map(s=>pickTile(s,sts.length===1)).join("")}</div>`).join("")}</div>`;
+};
+/* one big photo per location: the guest points at their gear, the valet taps it */
+function pickTile(s,on){
+  const eq=eqOf(s.id), ph=eq.find(e=>e.photo_id), cap=eq.map(eqLabel).join(", ")||"Equipment";
+  return `<label class="ptile">
+    <input type="checkbox" data-pick="${s.id}" ${on?"checked":""}>
+    <span class="img">${ph?`<img src="${photoUrl(ph.photo_id)}" alt="" loading="lazy">`:`<span class="ic">${eq.map(e=>catInfo(e.category).ic).join("")||"🎿"}</span>`}</span>
+    <span class="tick">✓</span>
+    ${ph?`<button type="button" class="zoom" data-act="zoom-photo" data-id="${esc(ph.photo_id)}" data-c="${esc(cap+" · "+s.storage_number)}" aria-label="Open photo">🔍</button>`:""}
+    <span class="cap"><b>${esc(cap)}</b><small>${esc(s.storage_number)}${s.section?" · "+esc(s.section):""}</small></span></label>`;
+}
+/* full-size photo above the open sheet, so a selection in progress is kept */
+function openLightbox(id,caption){
+  const lb=document.createElement("div"); lb.className="lightbox";
+  lb.innerHTML=`<button class="sheet-x" aria-label="Close">✕</button><img src="${photoUrl(id)}" alt="Equipment photo">${caption?`<p>${esc(caption)}</p>`:""}`;
+  lb.addEventListener("click",()=>lb.remove()); document.body.appendChild(lb);
+}
+const pickExtras = sts =>
+  `${sts.length>1?`<div class="row" style="gap:14px;margin:4px 0 0"><span class="muted tiny" style="text-decoration:underline;cursor:pointer" data-act="pick-all" data-v="1">Select all</span><span class="muted tiny" style="text-decoration:underline;cursor:pointer" data-act="pick-all" data-v="">Select none</span></div>`:""}`;
+document.addEventListener("change",e=>{          // "Handed over · 2" follows the selection
+  if(!e.target.dataset || e.target.dataset.pick===undefined) return;
+  const b=$('[data-act="do-room-hand"]'), n=$$("[data-pick]").filter(c=>c.checked).length;
+  if(b) b.textContent = n ? `Handed over · ${n}` : "Handed over";
+});
+const picked = sts => { const on=new Set($$("[data-pick]").filter(c=>c.checked).map(c=>+c.dataset.pick)); return sts.filter(s=>on.has(s.id)); };
 function confirmRoomHand(id){
   const r=room(id), sts=storagesOfRoom(id).filter(s=>s.status!=="guest_using"&&eqCount(s.id)).sort(byNumber);
   if(!sts.length) return;
-  openSheet(`<h3>Hand to guest</h3><p class="sub">Room ${esc(r.room_number)} · take these out:</p>
-    ${sts.map(s=>eqOf(s.id).map(eqLine).join("")).join("")}
+  openSheet(`<h3>Hand to guest</h3><p class="sub">Room ${esc(r.room_number)} · tap what the guest takes now</p>
+    ${pickList(sts)}${pickExtras(sts)}
     <div class="btn-grid" style="margin-top:14px"><button class="btn" data-act="close-sheet">Cancel</button>
       <button class="btn primary" data-act="do-room-hand" data-id="${r.id}">Handed over</button></div>`);
 }
 function doRoomHand(id){
-  const sts=storagesOfRoom(id).filter(s=>s.status!=="guest_using"&&eqCount(s.id));
+  const sts=picked(storagesOfRoom(id).filter(s=>s.status!=="guest_using"&&eqCount(s.id)));
+  if(!sts.length){ toast("Tap at least one item","err"); return; }
   sts.forEach(s=>{ setStorageStatus(s,"guest_using","Handed to guest");
     log("Equipment checked out",{storage_id:s.id,room_id:s.room_id,notes:manifest(s)}); });
   save(); closeSheet(); toast(sts.length+" location"+(sts.length===1?"":"s")+" handed out"); render();
@@ -1730,15 +1803,16 @@ function doRoomHand(id){
 function confirmRoomReturn(id){
   const r=room(id), sts=storagesOfRoom(id).filter(s=>s.status==="guest_using").sort(byNumber);
   if(!sts.length) return;
-  openSheet(`<h3>Return equipment</h3><p class="sub">Room ${esc(r.room_number)} · put each item back:</p>
-    ${sts.map(s=>eqOf(s.id).map(eqLine).join("")).join("")}
+  openSheet(`<h3>Return equipment</h3><p class="sub">Room ${esc(r.room_number)} · tap what comes back now</p>
+    ${pickList(sts)}${pickExtras(sts)}
     <div class="btn-grid" style="margin-top:14px">
       <button class="btn" data-act="do-room-return" data-id="${r.id}" data-next="preparing">Returned · drying</button>
       <button class="btn go" data-act="do-room-return" data-id="${r.id}" data-next="occupied">Returned · stored</button></div>
     <button class="btn ghost" style="margin-top:10px" data-act="close-sheet">Cancel</button>`);
 }
 function doRoomReturn(id,next){
-  const sts=storagesOfRoom(id).filter(s=>s.status==="guest_using");
+  const sts=picked(storagesOfRoom(id).filter(s=>s.status==="guest_using"));
+  if(!sts.length){ toast("Tap at least one item","err"); return; }
   sts.forEach(s=>{ setStorageStatus(s,next,"Returned by guest"); log("Equipment returned",{storage_id:s.id,room_id:s.room_id,next:stInfo(next).label}); });
   save(); closeSheet(); toast("Equipment returned"); render();
 }
@@ -2168,6 +2242,7 @@ document.addEventListener("click", e=>{
       if(t) t.scrollIntoView({behavior:"smooth",block:"start"}); else go("map",{}); break; }
     case "eq-edit": { const eq=DB.equipment.find(x=>x.id===id); if(eq) openEqSheet(eq.storage_id,eq.id); break; }
     case "photo": openPhoto(el.dataset.id,el.dataset.c); break;
+    case "zoom-photo": e.preventDefault(); openLightbox(el.dataset.id,el.dataset.c); break;
     case "eq-save": saveEq(el.dataset.storage, el.dataset.id?+el.dataset.id:null); break;
     case "eq-delete": { const eq=DB.equipment.find(x=>x.id===id); if(!eq){ closeSheet(); break; } DB.equipment=DB.equipment.filter(x=>x.id!==id);
       log("Equipment removed",{storage_id:eq.storage_id,notes:catInfo(eq.category).label}); save(); closeSheet(); toast("Equipment removed"); render(); break; }
@@ -2190,6 +2265,9 @@ document.addEventListener("click", e=>{
     case "do-edit-room": doEditRoom(id); break;
     case "room-hand": confirmRoomHand(id); break;
     case "do-room-hand": doRoomHand(id); break;
+    case "pick-all": $$("[data-pick]").forEach(c=>c.checked=!!el.dataset.v); $("[data-pick]")?.dispatchEvent(new Event("change",{bubbles:true})); break;
+    case "pick-owner": { const ids=new Set(el.dataset.ids.split(",").map(Number)); $$("[data-pick]").forEach(c=>{ if(ids.has(+c.dataset.pick)) c.checked=true; });
+      $("[data-pick]")?.dispatchEvent(new Event("change",{bubbles:true})); break; }
     case "room-return": confirmRoomReturn(id); break;
     case "do-room-return": doRoomReturn(id, el.dataset.next); break;
     case "room-out": confirmRoomOut(id); break;
