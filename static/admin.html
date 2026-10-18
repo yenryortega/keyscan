@@ -187,6 +187,8 @@ tr.picked td{background:rgba(255,77,77,.08)}
 /* ---------- modal / toast ---------- */
 .modal{position:fixed;inset:0;z-index:90;display:flex;align-items:center;justify-content:center;background:rgba(5,9,14,.72);padding:16px}
 .sheet{width:100%;max-width:560px;max-height:92vh;max-height:92dvh;overflow:auto;background:var(--slab);border:1px solid var(--line);border-radius:18px;padding:20px}
+.sheet-x{float:right;position:sticky;top:0;z-index:2;width:34px;height:34px;margin:-6px -6px 6px 10px;border-radius:50%;border:1px solid var(--line);background:var(--slab);color:var(--mist);font-size:15px;line-height:1;cursor:pointer}
+.sheet-x:hover{color:inherit;border-color:var(--mist)}
 .sheet h3{font-family:var(--display);font-size:24px;letter-spacing:1px;text-transform:uppercase;margin:0 0 4px}
 .sheet .sub{color:var(--mist);font-size:14px;margin:0 0 16px}
 .sheet .foot{display:flex;gap:8px;justify-content:flex-end;margin-top:16px;flex-wrap:wrap}
@@ -427,7 +429,8 @@ function checkIntegrity(){
     if(r.room_number==null||String(r.room_number).trim()==="") add(false,"Room without number",`Room record #${r.id} has no number.`,null,{view:"rooms",q:String(r.id)});
   });
 
-  if(!staffAcc()?.pin_set) add(true,"Staff PIN not set","Valets cannot sign in to the app.",null,{view:"users"});
+  if(!staffAcc()?.pin_set && !members().some(u=>u.pin_set)) add(true,"Staff PIN not set","Valets cannot sign in to the app.",null,{view:"users"});
+  else if(staffAcc()?.pin_set && members().some(u=>!u.pin_set)) add(false,"Staff without a personal PIN",members().filter(u=>!u.pin_set).map(u=>u.name).join(", ")+" still sign in with the shared PIN, so anyone who knows it can use their name.",null,{view:"users"});
   return out;
 }
 
@@ -948,23 +951,24 @@ V.users = () => {
   const hist = u => `<span class="lnk" data-act="go" data-view="history" data-q="${esc(u.name)}">${acts(u.id)}</span>`;
   return {body:`
     <h1>Staff &amp; access</h1>
-    <p class="lead">Every valet signs in with the same staff PIN and then taps their name, so the history shows who did what. The admin has its own username and password.</p>
+    <p class="lead">Give every valet their own 4-digit PIN: they sign in with it directly, so nobody can act under someone else's name and the history shows who really did what. Members without a personal PIN still use the shared staff PIN and tap their name. The admin has its own username and password.</p>
     <h3 style="margin:0 0 10px">Staff members · ${members().length}</h3>
     <div class="toolbar">
       <input class="input" id="mName" placeholder="Full name" autocomplete="off" style="max-width:260px">
       <input class="input" id="mMail" placeholder="Email (optional)" autocomplete="off" style="max-width:260px">
       <button class="btn primary" data-act="add-member">+ Add staff member</button>
     </div>
-    <div class="tbl-wrap" style="margin-bottom:22px"><table><thead><tr><th>Name</th><th>Email</th><th>Actions</th><th>Added</th><th></th></tr></thead><tbody>
-      ${members().map(u=>`<tr class="clk" data-act="detail" data-col="users" data-id="${u.id}"><td><b>${esc(u.name)}</b></td><td>${esc(u.email||"—")}</td><td>${hist(u)}</td><td>${u.created_at?fmtDT(u.created_at):"—"}</td>
-        <td class="act"><button class="btn sm" data-act="edit-member" data-id="${u.id}">Edit</button><button class="btn sm danger" data-act="rm-member" data-id="${u.id}">Remove</button></td></tr>`).join("")
-        ||`<tr><td colspan="5" class="dim" style="text-align:center;padding:20px">No staff members yet — everyone signs in as “Staff”.</td></tr>`}
+    <div class="tbl-wrap" style="margin-bottom:22px"><table><thead><tr><th>Name</th><th>Email</th><th>PIN</th><th>Actions</th><th>Added</th><th></th></tr></thead><tbody>
+      ${members().map(u=>`<tr class="clk" data-act="detail" data-col="users" data-id="${u.id}"><td><b>${esc(u.name)}</b></td><td>${esc(u.email||"—")}</td>
+        <td>${u.pin_set?`<span class="mono">●●●●</span> personal`:`<span class="dim">shared PIN</span>`}</td><td>${hist(u)}</td><td>${u.created_at?fmtDT(u.created_at):"—"}</td>
+        <td class="act"><button class="btn sm" data-act="member-pin" data-id="${u.id}">${u.pin_set?"Change PIN":"Set PIN"}</button><button class="btn sm" data-act="edit-member" data-id="${u.id}">Edit</button><button class="btn sm danger" data-act="rm-member" data-id="${u.id}">Remove</button></td></tr>`).join("")
+        ||`<tr><td colspan="6" class="dim" style="text-align:center;padding:20px">No staff members yet — everyone signs in as “Staff”.</td></tr>`}
     </tbody></table></div>
     ${arch.length?`<p class="dim tiny" style="margin:-10px 0 22px">Removed (history kept): ${arch.map(u=>`${esc(u.name)} · ${hist(u)} <span class="lnk" data-act="restore-member" data-id="${u.id}">restore</span>`).join(" &nbsp;|&nbsp; ")}</p>`:""}
     <div class="grid2">
       <div class="panel">
         <h3 style="margin:0 0 4px">Staff PIN</h3>
-        <p class="muted tiny" style="margin:0 0 12px">Shared by every valet in the app.<br>PIN <span class="mono">${st.pin_set?"set":"not set"}</span> (stored encrypted on the server) ·
+        <p class="muted tiny" style="margin:0 0 12px">For members without a personal PIN (they tap their name after it).<br>PIN <span class="mono">${st.pin_set?"set":"not set"}</span> (stored encrypted on the server) ·
           <span class="lnk" data-act="go" data-view="history" data-q="${esc(st.name)}">${acts(st.id)} actions</span></p>
         <div class="row"><input class="input" id="pin_staff" inputmode="numeric" pattern="[0-9]*" maxlength="4" placeholder="New 4-digit PIN" autocomplete="off" style="max-width:180px">
         <button class="btn primary" data-act="set-pin">Change</button></div>
@@ -991,6 +995,24 @@ async function setPin(){
   if(st) st.pin_set=true;
   log("Staff PIN changed",{}); save(); render();
   toast("Staff PIN updated");
+}
+function memberPin(id){
+  const u=user(id); if(!u||u.shared) return;
+  openSheet(`<h3>PIN for ${esc(u.name)}</h3><p class="sub">${u.pin_set?"A personal PIN is set. Enter a new one to replace it.":"No personal PIN yet — this member signs in with the shared staff PIN."}
+      Each member needs a different PIN; tell it to ${esc(u.name)} in person.</p>
+    <label class="f"><span>New 4-digit PIN</span><input class="input" id="mpPin" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off"></label>
+    <div class="foot">${u.pin_set?`<button class="btn danger" data-act="clear-member-pin" data-id="${u.id}">Remove PIN</button>`:""}<span class="grow"></span>
+      <button class="btn" data-act="close">Cancel</button><button class="btn primary" data-act="save-member-pin" data-id="${u.id}">Save PIN</button></div>`);
+  setTimeout(()=>$("#mpPin")?.focus(),60);
+}
+async function saveMemberPin(id,clear){
+  const u=user(id); if(!u) return;
+  const v=clear?"":$("#mpPin").value.trim();
+  if(!clear && !validPin(v)){ toast("PIN must be exactly 4 digits","err"); return; }
+  if(SkiSync.pending()){ try{ await SkiSync.save(); }catch(_){} }     // a member just added must reach the server first
+  try{ await API("/api/admin/member-pin",{id:u.id,pin:v}); }catch(e){ toast(e.message,"err"); return; }
+  await SkiSync.refresh();
+  closeSheet(); render(); toast(clear?`PIN removed — ${u.name} uses the shared PIN again`:`PIN saved for ${u.name}`);
 }
 function addMember(){
   const name=$("#mName").value.trim(), email=$("#mMail").value.trim();
@@ -1591,8 +1613,8 @@ function importJSON(text,name){
 }
 
 /* ---------- modal ---------- */
-function openSheet(html,wide){ const m=$("#modal"); m.innerHTML=`<div class="sheet${wide?" wide":""}">${html}</div>`; m.classList.remove("hidden");
-  m.onclick=e=>{ if(e.target===m) closeSheet(); }; }
+function openSheet(html,wide){ const m=$("#modal"); m.innerHTML=`<div class="sheet${wide?" wide":""}"><button class="sheet-x" aria-label="Close">✕</button>${html}</div>`; m.classList.remove("hidden");
+  m.onclick=e=>{ if(e.target===m || e.target.closest(".sheet-x")) closeSheet(); }; }
 function closeSheet(){ const m=$("#modal"); m.classList.add("hidden"); m.innerHTML=""; }
 function confirmSheet(title,sub,btn,fn){
   openSheet(`<h3 style="color:var(--st-attention)">${title}</h3><p class="sub">${sub}</p>
@@ -1625,6 +1647,9 @@ document.addEventListener("click",e=>{
     case "map-rename-go": mapRenameGo(el.dataset.area); break;
     case "map-drop-free": mapDropFree(el.dataset.area); break;
     case "edit-member": editMember(id); break;
+    case "member-pin": memberPin(id); break;
+    case "save-member-pin": saveMemberPin(id); break;
+    case "clear-member-pin": confirmSheet("Remove PIN",esc(user(id)?.name||"")+" will sign in with the shared staff PIN again.","Remove PIN",()=>saveMemberPin(id,true)); break;
     case "save-member": saveMember(id); break;
     case "rm-member": removeMember(id); break;
     case "restore-member": restoreMember(id); break;
@@ -1680,6 +1705,7 @@ document.addEventListener("keydown",e=>{
   if(e.key==="Escape") closeSheet();
   if(e.key==="Enter"&&(e.target.id==="lUser"||e.target.id==="lPass")) doLogin();
   if(e.key==="Enter"&&(e.target.id==="mName"||e.target.id==="mMail")) addMember();
+  if(e.key==="Enter"&&e.target.id==="mpPin"){ const b=$('[data-act="save-member-pin"]'); b&&b.click(); }
   if(e.key==="Enter"&&e.target.closest&&e.target.closest("#frm")){ const b=$('[data-act="save"]'); b&&b.click(); }
 });
 

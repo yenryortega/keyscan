@@ -288,6 +288,9 @@ select.input{appearance:none;background-image:linear-gradient(45deg,transparent 
   animation:up .18s ease-out}
 @media(min-width:640px){.sheet{border-radius:20px}}
 @keyframes up{from{transform:translateY(16px);opacity:0}to{transform:none;opacity:1}}
+.sheet-x{float:right;position:sticky;top:0;z-index:2;width:36px;height:36px;margin:-6px -4px 6px 10px;border-radius:50%;
+  border:1px solid var(--line);background:var(--slab);color:var(--mist);font-size:16px;line-height:1;cursor:pointer}
+.sheet-x:hover{color:inherit;border-color:var(--mist)}
 .sheet h3{font-family:var(--display);font-size:24px;letter-spacing:1.2px;text-transform:uppercase;margin:0 0 4px}
 .sheet .sub{color:var(--mist);font-size:14px;margin:0 0 16px}
 #toast{position:fixed;left:0;right:0;bottom:calc(18px + var(--safe-b));z-index:120;display:flex;
@@ -394,9 +397,10 @@ function normaliseDB(db){
   COLLECTIONS.forEach(k=>{ if(!Array.isArray(db[k])) db[k]=[]; });
   return db;
 }
-/* Access model: ONE shared staff PIN for every valet (then each valet taps their
-   name) and ONE admin login (username + password). Both are checked by the
-   server and stored there only as hashes. */
+/* Access model: each valet can have a personal PIN (set by the admin) that signs
+   them in directly; members without one use the shared staff PIN and tap their
+   name. ONE admin login (username + password). All checked by the server and
+   stored there only as hashes. */
 const validPin = p => /^\d{4}$/.test(String(p??""));
 const adminAcc = () => DB.users.find(u=>u.shared==="admin");
 const staffAcc = () => DB.users.find(u=>u.shared==="staff");
@@ -566,8 +570,9 @@ const byNumber = (a,b) => String(a.section||"").localeCompare(String(b.section||
 /* where an item may go, best first: VIP guests use the VIP area while it has room,
    kids' skis use Ski kids, then the regular area of that kind */
 function kindsFor(item,vip){
-  const k = item.category==="skis" ? (item.kids?["ski_kids","ski"]:["ski"])
-    : item.category==="snowboard" ? (item.kids?["ski_kids","snowboard"]:["snowboard"])
+  const kids = item.kids && !vip;   // a VIP guest has no Kids option
+  const k = item.category==="skis" ? (kids?["ski_kids","ski"]:["ski"])
+    : item.category==="snowboard" ? (kids?["ski_kids","snowboard"]:["snowboard"])
     : item.category==="boots" ? ["boots"] : [];
   return vip ? ["vip",...k] : k;
 }
@@ -720,7 +725,7 @@ function viewLogin(){
     </div>
     <p class="hint" style="text-align:center;margin-top:16px">${noStaff
       ?"The staff PIN is not set yet. An admin has to sign in and set it under Access."
-      :"Enter the staff PIN."}</p>
+      :"Enter your PIN."}</p>
     <button class="btn ghost" data-act="admin-login" style="width:100%;margin-top:10px">Admin sign in</button>
   </div>`;
 }
@@ -749,7 +754,7 @@ async function tryLogin(){
   const entered=pin; pin="";
   try{
     const r=await API("/api/login/pin",{pin:entered});
-    if(r.user){ await afterSignIn(r.user); return; }           // no names added yet → generic "Staff"
+    if(r.user){ await afterSignIn(r.user); return; }           // personal PIN, or no names yet → generic "Staff"
     PICK=r.members||[]; pinOk=true; render();
   }catch(e){
     toast(e.message,"err");
@@ -1191,7 +1196,6 @@ VIEWS.stow = (p) => {
   const r = room(p.room_id);
   if(p.room_id && !r) return {title:"Check in", body:`<div class="empty">This room no longer exists.</div>`};
   if(r && d.vip===false && r.vip && r.status!=="checked_out") d.vip=true;
-  if(!d.items.length && !d.touched) d.items.push(newItem("boots"));
   return {title:"Check in", sub:r?"Room "+esc(r.room_number):"By room number",
   body:`
     ${r?`<div class="panel"><div class="row between"><b class="num" style="font-size:30px">Room ${esc(r.room_number)}</b>
@@ -1246,7 +1250,7 @@ function drawItems(){
     return `<div class="ci-item" data-key="${i.key}">
       <div class="hd"><span style="font-size:22px">${c.ic}</span><b>${esc(c.label)}</b>
         <button class="btn sm ghost" data-act="ci-del" data-key="${i.key}" aria-label="Remove">✕</button></div>
-      ${i.category==="skis"||i.category==="snowboard"?`<label class="check"><input type="checkbox" data-ci="kids" ${i.kids?"checked":""}> Kids use — goes to the Kids area</label>`:""}
+      ${!d.vip&&(i.category==="skis"||i.category==="snowboard")?`<label class="check"><input type="checkbox" data-ci="kids" ${i.kids?"checked":""}> Kids use — goes to the Kids area</label>`:""}
       <div class="ci-photo">
         ${i.photo?`<img src="${i.photo}" alt="" data-act="ci-cam" data-key="${i.key}" style="cursor:pointer">`:""}
         <button class="btn sm ${i.photo?"":"primary"}" style="width:auto;flex:1" data-act="ci-cam" data-key="${i.key}">📷 ${i.photo?"Retake photo":"Take photo"}</button>
@@ -1301,7 +1305,7 @@ async function stowSave(){
     s.room_id=r.id; s.updated_at=now();
     const e={id:uid(),storage_id:s.id,category:i.category,description:"",quantity:1,size:"",type:"",
       status:"stored",created_at:now(),updated_at:now()};
-    if(i.kids) e.kids=true;
+    if(i.kids && !d.vip) e.kids=true;
     if(i.photo_id) e.photo_id=i.photo_id;
     DB.equipment.push(e);
     setStorageStatus(s,"occupied","Check-in");
@@ -1773,6 +1777,24 @@ function storageRow(s){
     <span class="body"><b>${r?"Room "+esc(r.room_number):"No room"}</b><small>${esc(s.section||"—")} · ${eqOf(s.id).map(eqLabel).join(", ")||"empty"}</small></span>
     <span class="chip s-${esc(s.status)}"><i class="dot"></i>${esc(st.label)}</span><span class="arr">›</span></button>`;
 }
+/* Storage lists show a room once, however many locations it uses: the row opens
+   the room, which lists all of them. Locations without a room keep their own row. */
+function roomStorageRow(r,sts){
+  const items=sts.flatMap(s=>eqOf(s.id)).map(eqLabel), stat=[...new Set(sts.map(s=>s.status))];
+  const st=stat.length===1?stInfo(stat[0]):null;
+  return `<button class="item" data-act="nav" data-view="room" data-id="${r.id}">
+    <span class="tag sm" style="white-space:nowrap">${esc(sts[0].storage_number)}${sts.length>1?" +"+(sts.length-1):""}</span>
+    <span class="body"><b>Room ${esc(r.room_number)}</b><small>${sts.length} location${sts.length===1?"":"s"} · ${esc(sts.map(s=>s.storage_number).join(", "))} · ${esc(items.join(", ")||"empty")}</small></span>
+    ${st?`<span class="chip s-${esc(stat[0])}"><i class="dot"></i>${esc(st.label)}</span>`:""}<span class="arr">›</span></button>`;
+}
+function storageRows(list){
+  const byRoom=new Map(), out=[];          // keeps the list's order: a room sits where its first location was
+  list.forEach(s=>{ const r=room(s.room_id);
+    if(!r){ out.push({s}); return; }
+    if(!byRoom.has(r.id)){ const g={r,sts:[]}; byRoom.set(r.id,g); out.push(g); }
+    byRoom.get(r.id).sts.push(s); });
+  return out.map(x=>x.r?roomStorageRow(x.r,x.sts):storageRow(x.s)).join("");
+}
 VIEWS.rooms = (p={}) => {
   const all=[...DB.rooms].sort(byRoom);
   const live = r => r.status!=="checked_out" || storagesOfRoom(r.id).length || cardsOfRoom(r.id).length;
@@ -1805,11 +1827,11 @@ VIEWS.storages = () => {
   return {title:"Storages", sub:list.length+" locations",
   body:`<div class="searchbar" style="margin-bottom:10px">🔎<input id="qSt" placeholder="Storage or room number" autocomplete="off"></div>
     <div class="rolebar" id="fBar">${filters.map(f=>`<button data-f="${f}" class="${f==="all"?"on":""}">${f==="all"?"All":esc(STATUS[f].label)}</button>`).join("")}</div>
-    <div class="list" id="stList" style="margin-top:12px">${list.map(storageRow).join("")}</div>`,
+    <div class="list" id="stList" style="margin-top:12px">${storageRows(list)}</div>`,
   after(){
     let f="all"; const draw=()=>{ const q=$("#qSt").value.trim().toLowerCase();
       const out=list.filter(s=>(f==="all"||s.status===f) && (!q||String(s.storage_number??"").toLowerCase().includes(q)||normCode(s.storage_number).includes(normCode(q))||String(room(s.room_id)?.room_number??"").toLowerCase().includes(q)));
-      $("#stList").innerHTML=out.map(storageRow).join("")||`<div class="empty">Nothing matches this filter.</div>`; };
+      $("#stList").innerHTML=storageRows(out)||`<div class="empty">Nothing matches this filter.</div>`; };
     $("#qSt").addEventListener("input",draw);
     $$("#fBar button").forEach(b=>b.addEventListener("click",()=>{ $$("#fBar button").forEach(x=>x.classList.remove("on")); b.classList.add("on"); f=b.dataset.f; draw(); }));
   }};
@@ -1834,7 +1856,8 @@ VIEWS.active = () => {
   const groups=[["ready","Ready for guest"],["guest_using","With the guest"],["occupied","Stored"],["preparing","Preparing"],["attention","Needs attention"]];
   return {title:"Active storage", sub:"Everything in use right now",
   body: groups.map(([k,label])=>{ const rows=DB.storages.filter(s=>s.status===k); if(!rows.length) return "";
-      return `<h2 class="sec">${label} · ${rows.length}</h2><div class="list">${rows.map(storageRow).join("")}</div>`;
+      const rooms=new Set(rows.map(s=>s.room_id).filter(id=>room(id))).size;
+      return `<h2 class="sec">${label} · ${rows.length}${rooms&&rooms!==rows.length?` locations · ${rooms} room${rooms===1?"":"s"}`:""}</h2><div class="list">${storageRows(rows)}</div>`;
     }).join("") || `<div class="empty"><span class="ic">🏔️</span>The hall is empty.</div>`};
 };
 
@@ -2017,7 +2040,7 @@ VIEWS.users = () => {
   return {title:"Access", sub:"Staff PIN and admin login",
   body:`<div class="panel" style="margin-bottom:12px">
       <div class="eyebrow">Staff PIN</div>
-      <p class="muted tiny" style="margin:6px 0 14px">Shared by every valet · <b>${st.pin_set?"set":"not set"}</b> (stored encrypted on the server) ·
+      <p class="muted tiny" style="margin:6px 0 14px">For members without a personal PIN · <b>${st.pin_set?"set":"not set"}</b> (stored encrypted on the server) ·
         <span data-act="staff-log" data-id="${st.id}" style="text-decoration:underline;cursor:pointer">${acts(st.id)} actions</span></p>
       <label class="f"><span>New 4-digit PIN</span><input class="input" id="pin_staff" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off"></label>
       <button class="btn primary" data-act="set-pin">Change staff PIN</button>
@@ -2033,7 +2056,7 @@ VIEWS.users = () => {
       <button class="btn primary" data-act="set-admin">Save admin login</button>
     </div>
     <h2 class="sec">Staff members · ${members().length}</h2>
-    <div class="list">${members().map(u=>`<div class="item"><span class="body"><b>${esc(u.name)}</b><small>${acts(u.id)} actions</small></span>
+    <div class="list">${members().map(u=>`<div class="item"><span class="body"><b>${esc(u.name)}</b><small>${acts(u.id)} actions · ${u.pin_set?"personal PIN":"shared PIN"}</small></span>
       <button class="btn sm ghost" data-act="staff-log" data-id="${u.id}">History</button>
       <button class="btn sm danger" data-act="rm-member" data-id="${u.id}">Remove</button></div>`).join("")
       ||`<div class="empty">No names yet. Everyone signs in as “Staff”.</div>`}</div>
@@ -2041,7 +2064,7 @@ VIEWS.users = () => {
       <label class="f"><span>Add staff member</span><input class="input" id="mName" placeholder="Full name" autocapitalize="words"></label>
       <button class="btn primary" data-act="add-member">Add</button>
     </div>
-    <div class="hint">Everyone uses the same staff PIN, then taps their name. Removed members keep their history.</div>`};
+    <div class="hint">Personal PINs are set from the admin panel (Staff &amp; access). Members without one use the shared staff PIN, then tap their name. Removed members keep their history.</div>`};
 };
 async function setPin(){
   if(SESSION.role!=="admin"){ toast("Admins only","err"); return; }
@@ -2084,8 +2107,8 @@ function openAccount(){
 /* ==========================================================================
    15. SHEETS
    ========================================================================== */
-function openSheet(html){ const m=$("#modal"); m.innerHTML=`<div class="sheet">${html}</div>`; m.classList.remove("hidden");
-  m.onclick=e=>{ if(e.target===m) closeSheet(); }; }
+function openSheet(html){ const m=$("#modal"); m.innerHTML=`<div class="sheet"><button class="sheet-x" aria-label="Close">✕</button>${html}</div>`; m.classList.remove("hidden");
+  m.onclick=e=>{ if(e.target===m || e.target.closest(".sheet-x")) closeSheet(); }; }
 let staleView=false;
 function closeSheet(){ stopCamera(); const m=$("#modal"); m.classList.add("hidden"); m.innerHTML="";
   if(staleView){ staleView=false; render(); } }
