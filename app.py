@@ -75,7 +75,7 @@ LEGACY_ADMIN_HASH = ("pbkdf2:sha256:260000$IrBfOswUM7KwcPJZ$"
 # kind: boots | ski | ski_kids | snowboard | vip
 # Areas as on the floor plan (drawn in static/index.html, HALL_PLAN — keep the names in step):
 #   top row:    Boots 1 · Boots 2 · Snowboard · Ski 1        right wall: Ski 2
-#   bottom row: Boots 3 | door | Boots 4 | door | VIP · Ski Kids | door
+#   bottom row: Boots 3 | door | Boots 4 | door | VIP · Kids | door
 # The numbers per area are placeholders until the real counts are known.
 HALL_LAYOUT = [
     ("Boots 1", "boots", "B1-", 1, 20),
@@ -85,7 +85,7 @@ HALL_LAYOUT = [
     ("Snowboard", "snowboard", "SB-", 1, 20),
     ("Ski 1", "ski", "S1-", 1, 20),
     ("Ski 2", "ski", "S2-", 1, 20),
-    ("Ski Kids", "ski_kids", "SK-", 1, 20),
+    ("Kids", "ski_kids", "K-", 1, 20),
     ("VIP", "vip", "V-", 1, 10),
 ]
 
@@ -335,6 +335,10 @@ def init_db():
             cur.execute("""INSERT INTO users (id, name, email, role, shared, created_at, updated_at, pin_hash)
                            VALUES (%s, 'Staff', '', 'staff', 'staff', %s, %s, %s)""",
                         (new_id() + 1, now, now, generate_password_hash(pin) if re.fullmatch(r"\d{4}", pin) else None))
+        cur.execute("UPDATE storages SET section = 'Kids' WHERE section = 'Ski Kids'")   # area renamed
+        cur.execute("""UPDATE storages s SET storage_number = 'K-' || substr(s.storage_number, 4)
+                       WHERE s.storage_number LIKE 'SK-%%' AND NOT EXISTS (SELECT 1 FROM storages o
+                       WHERE o.storage_number = 'K-' || substr(s.storage_number, 4))""")      # SK-01 -> K-01
         tidy_hall(cur)                                    # clean up rooms left over by older versions
         # once per layout version: an empty hall gets the floor-plan areas (version 2 =
         # one area per equipment kind); a hall emptied on purpose later stays empty
