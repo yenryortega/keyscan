@@ -463,7 +463,7 @@ const CATS = {
 };
 const STORED = ["boots","skis","snowboard"];
 /* Every area of the hall holds one kind of equipment. Each item gets its own location. */
-const KINDS = {boots:"Boots", ski:"Ski", ski_kids:"Ski kids", snowboard:"Snowboard", vip:"VIP"};
+const KINDS = {boots:"Boots", ski:"Ski", ski_kids:"Kids", snowboard:"Snowboard", vip:"VIP"};
 /* The hall as drawn on the floor plan (viewBox 100 × 54). Keyed by area name: an
    area renamed in Hall setup simply drops off the drawing, nothing breaks. */
 const HALL_PLAN = {
@@ -475,7 +475,7 @@ const HALL_PLAN = {
   "Boots 3":  {x:2,  y:37, w:27, h:12, where:"bottom row, left"},
   "Boots 4":  {x:32, y:37, w:15, h:12, where:"bottom row, middle"},
   "VIP":      {x:50, y:37, w:11, h:12, where:"bottom row, next to Kids"},
-  "Ski Kids": {x:63, y:37, w:20, h:12, where:"bottom row, right"}
+  "Kids":     {x:63, y:37, w:20, h:12, where:"bottom row, right"}
 };
 const KIND_COLOR = {boots:"#A98BF5", ski:"#5EC8F2", ski_kids:"#35C36A", snowboard:"#F0A93B", vip:"#FF6A2B"};
 const whereOf = s => HALL_PLAN[s && s.section] ? HALL_PLAN[s.section].where : "";
@@ -594,7 +594,7 @@ const isFree = s => s.status==="available" && s.room_id==null && !eqCount(s.id);
 const byNumber = (a,b) => String(a.section||"").localeCompare(String(b.section||""),undefined,{numeric:true})
   || String(a.storage_number??"").localeCompare(String(b.storage_number??""),undefined,{numeric:true});
 /* where an item may go, best first: VIP guests use the VIP area while it has room,
-   kids' skis use Ski kids, then the regular area of that kind */
+   kids' skis use Kids, then the regular area of that kind */
 function kindsFor(item,vip){
   const kids = item.kids && !vip;   // a VIP guest has no Kids option
   const k = item.category==="skis" ? (kids?["ski_kids","ski"]:["ski"])
@@ -855,7 +855,7 @@ VIEWS.dash = () => {
       <div class="eyebrow" style="color:var(--signal)">First run</div>
       <b class="num" style="font-size:24px;display:block;margin:4px 0 6px">The hall is empty</b>
       <p class="muted tiny" style="margin:0 0 12px">${SESSION.role==="admin"
-        ?"Create the storage areas of the floor plan: Boots 1–4, Snowboard, Ski 1–2, Ski Kids and VIP."
+        ?"Create the storage areas of the floor plan: Boots 1–4, Snowboard, Ski 1–2, Kids and VIP."
         :"An admin has to create the storage areas first (Hall setup)."}</p>
       ${SESSION.role==="admin"&&SkiSync.missingLayout(DB).length?`<button class="btn primary" data-act="load-layout">Create storage areas</button>`:""}
       <button class="btn ghost" style="margin-top:8px" data-act="nav" data-view="setup">Hall setup</button>
@@ -1214,7 +1214,7 @@ function saveNewCard(code,next){
 
 /* ==========================================================================
    8b. CHECK IN — by key card or by room number. Every item gets its own
-       location in the area of its kind (boots / ski / ski kids / snowboard /
+       location in the area of its kind (boots / ski / kids / snowboard /
        VIP); the valet can change the suggestion and add a photo per item.
    ========================================================================== */
 VIEWS.stow = (p) => {

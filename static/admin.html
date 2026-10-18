@@ -286,7 +286,7 @@ const CATS = {
   sbboots:"Snowboard boots", helmet:"Helmet", goggles:"Goggles", other:"Other"
 };
 /* what each area holds (same list as the valet app) */
-const KINDS = {boots:"Boots", ski:"Ski", ski_kids:"Ski kids", snowboard:"Snowboard", vip:"VIP"};
+const KINDS = {boots:"Boots", ski:"Ski", ski_kids:"Kids", snowboard:"Snowboard", vip:"VIP"};
 const photoUrl = id => "/api/photos/"+encodeURIComponent(id);
 const photoImg = id => id?`<a href="${photoUrl(id)}" target="_blank" rel="noopener"><img src="${photoUrl(id)}" alt="Equipment photo" loading="lazy" style="width:100%;max-width:360px;border-radius:10px;display:block;margin:6px 0 12px"></a>`:"";
 const EQ_STATUS = {stored:"Stored"};
