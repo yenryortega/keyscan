@@ -44,7 +44,9 @@ Si no defines `SECRET_KEY`, se genera una y se guarda en la base de datos.
    El dibujo del plano que muestra la app está en `HALL_PLAN` (`static/index.html`); usa los mismos
    nombres de zona, así que si renombras una zona hay que cambiarlo también allí. Si borras alguna, **Hall setup** (app)
    o **Storage map** (/admin) muestran *Restore default layout* para volver a crear las que falten.
-4. Los valets entran con el PIN y tocan su nombre.
+4. Cada valet entra con su **PIN personal** (Admin → Staff & access → *Set PIN*), sin elegir nombre:
+   así nadie puede trabajar con el nombre de otro. Quien aún no tenga PIN personal entra con el PIN
+   compartido y toca su nombre.
 
 La consola de administración está en `/admin` (misma sesión que la app).
 

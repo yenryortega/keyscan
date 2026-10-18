@@ -4,7 +4,8 @@ Ski Valet — Flask + PostgreSQL backend (Railway)
 The two front-ends (static/index.html and static/admin.html) keep their data
 model in memory and sync it through /api/sync. PostgreSQL is the single source
 of truth: nothing is kept in the browser's localStorage anymore, and the admin
-password and staff PIN only ever exist here, as hashes.
+password and the staff PINs (the shared one and each member's personal one) only
+ever exist here, as hashes.
 
 Sync protocol (see static/sync.js)
   * Every row carries a `rev` taken from one global sequence (set by a trigger
@@ -21,6 +22,8 @@ Sync protocol (see static/sync.js)
 import base64
 import binascii
 import datetime as dt
+import hashlib
+import hmac
 import json
 import math
 import os
@@ -206,7 +209,7 @@ def row_out(t, r, admin=False, with_rev=True):
         v = r[c]
         o[c] = OUT[ty](v) if ty in OUT else v
     if t == "users":
-        if r["shared"] == "staff":
+        if r["shared"] in ("staff", None):
             o["pin_set"] = bool(r["pin_hash"])
         if r["shared"] == "admin" and admin:
             o["username"] = r["username"]
@@ -581,6 +584,25 @@ def start_session(u):
         session["ver"] = u["auth_ver"]
 
 
+# Personal PINs are an HMAC of the PIN with the server key, so the member a PIN
+# belongs to is found with one lookup and two members can never share one.
+def pin_digest(cur, pin):
+    key = meta_get(cur, "secret_key").encode()
+    return "hmac$" + hmac.new(key, pin.encode(), hashlib.sha256).hexdigest()
+
+
+def drop_stale_pins(cur):
+    """Removed members lose their PIN, so it can be given to someone else."""
+    cur.execute("""UPDATE users SET pin_hash = NULL WHERE shared IS NULL AND pin_hash IS NOT NULL
+                   AND (archived OR retired)""")
+
+
+def any_pin_set(cur):
+    cur.execute("""SELECT 1 FROM users WHERE pin_hash IS NOT NULL AND (shared = 'staff'
+                   OR (shared IS NULL AND NOT archived AND NOT retired)) LIMIT 1""")
+    return bool(cur.fetchone())
+
+
 # ---------------- pages ----------------
 def page(name):
     resp = send_from_directory(STATIC, name, max_age=0)
@@ -617,10 +639,8 @@ def healthz():
 def me():
     with tx() as cur:
         u = load_user(cur)
-        cur.execute("SELECT pin_hash FROM users WHERE shared = 'staff'")
-        st = cur.fetchone()
         return jsonify(user=row_out("users", u, is_admin(u)) if u else None,
-                       staff_pin_set=bool(st and st["pin_hash"]))
+                       staff_pin_set=any_pin_set(cur))
 
 
 @app.post("/api/login/pin")
@@ -628,19 +648,34 @@ def login_pin():
     pin = str(body().get("pin") or "")
     with tx() as cur:
         throttle(cur)
-        cur.execute("SELECT * FROM users WHERE shared = 'staff'")
-        st = cur.fetchone()
-        if not st or not st["pin_hash"]:
+        if not any_pin_set(cur):
             raise ApiError(400, "The staff PIN is not set yet. An admin has to set it under Access.")
-        if not re.fullmatch(r"\d{4}", pin) or not check_password_hash(st["pin_hash"], pin):
+        if not re.fullmatch(r"\d{4}", pin):
             record_fail(cur)
             return jsonify(error="Wrong PIN"), 400
-        cur.execute("""SELECT id, name FROM users WHERE shared IS NULL AND NOT archived AND NOT retired
-                       ORDER BY lower(name)""")
-        members = cur.fetchall()
-        if not members:                                   # no names yet -> generic "Staff"
+        # 1. a personal PIN signs that member in directly
+        cur.execute("""SELECT * FROM users WHERE shared IS NULL AND NOT archived AND NOT retired
+                       AND pin_hash = %s""", (pin_digest(cur, pin),))
+        u = cur.fetchone()
+        if u:
+            start_session(u)
+            return jsonify(user=row_out("users", u))
+        # 2. the shared staff PIN: only for members who have no personal PIN yet
+        cur.execute("SELECT * FROM users WHERE shared = 'staff'")
+        st = cur.fetchone()
+        if not st or not st["pin_hash"] or not check_password_hash(st["pin_hash"], pin):
+            record_fail(cur)
+            return jsonify(error="Wrong PIN"), 400
+        cur.execute("""SELECT id, name, pin_hash IS NOT NULL AS has_pin FROM users
+                       WHERE shared IS NULL AND NOT archived AND NOT retired ORDER BY lower(name)""")
+        everyone = cur.fetchall()
+        if not everyone:                                  # no names yet -> generic "Staff"
             start_session(st)
             return jsonify(user=row_out("users", st))
+        members = [{"id": m["id"], "name": m["name"]} for m in everyone if not m["has_pin"]]
+        if not members:
+            record_fail(cur)
+            return jsonify(error="Use your personal PIN"), 400
         session.clear()
         session["pin_ok"] = time.time()
         return jsonify(members=members)
@@ -657,6 +692,8 @@ def login_member():
         u = cur.fetchone()
         if not u:
             raise ApiError(400, "That name is no longer available")
+        if u["pin_hash"]:
+            raise ApiError(400, f"{u['name']} has a personal PIN — sign in with it")
         start_session(u)
         return jsonify(user=row_out("users", u))
 
@@ -691,9 +728,41 @@ def set_pin(cur, u):
     if not re.fullmatch(r"\d{4}", pin):
         raise ApiError(400, "The PIN must be exactly 4 digits")
     write_lock(cur)
+    cur.execute("SELECT 1 FROM users WHERE shared IS NULL AND pin_hash = %s", (pin_digest(cur, pin),))
+    if cur.fetchone():
+        raise ApiError(400, "A staff member already uses this PIN as their personal PIN")
     cur.execute("UPDATE users SET pin_hash = %s, updated_at = now() WHERE shared = 'staff'",
                 (generate_password_hash(pin),))
     return jsonify(ok=True)
+
+
+@app.post("/api/admin/member-pin")
+@auth(admin=True)
+def set_member_pin(cur, u):
+    """Gives a staff member their own PIN (pin "" removes it)."""
+    b = body()
+    mid, pin = valid_id(b.get("id")), str(b.get("pin") or "")
+    if pin and not re.fullmatch(r"\d{4}", pin):
+        raise ApiError(400, "The PIN must be exactly 4 digits")
+    write_lock(cur)
+    cur.execute("SELECT * FROM users WHERE id = %s AND shared IS NULL AND NOT archived AND NOT retired", (mid,))
+    m = cur.fetchone()
+    if not m:
+        raise ApiError(400, "That staff member no longer exists")
+    digest = None
+    if pin:
+        digest = pin_digest(cur, pin)
+        cur.execute("SELECT name FROM users WHERE shared IS NULL AND pin_hash = %s AND id <> %s", (digest, mid))
+        if cur.fetchone():
+            raise ApiError(400, "Another staff member already uses this PIN — choose a different one")
+        cur.execute("SELECT pin_hash FROM users WHERE shared = 'staff'")
+        st = cur.fetchone()
+        if st and st["pin_hash"] and check_password_hash(st["pin_hash"], pin):
+            raise ApiError(400, "That is the shared staff PIN — choose a different one")
+    cur.execute("UPDATE users SET pin_hash = %s, updated_at = now() WHERE id = %s RETURNING *", (digest, mid))
+    m = cur.fetchone()
+    log_server(cur, u["id"], "[Admin] Staff PIN " + ("set" if pin else "removed"), m["name"])
+    return jsonify(user=row_out("users", m, admin=True))
 
 
 @app.post("/api/admin/login")
@@ -809,6 +878,8 @@ def sync_post(cur, u):
         else:
             cur.execute(f"DELETE FROM {t} WHERE id = ANY(%s)", (ids,))
     tidy_hall(cur, freed)
+    if plan["users"][0]:
+        drop_stale_pins(cur)
     cur.execute("SET CONSTRAINTS ALL IMMEDIATE")           # surface FK / unique problems as 409 now
     return jsonify(pull(cur, since, b.get("epoch"), admin))
 
@@ -869,6 +940,8 @@ def replace_all(cur, data, keep_history, actor, label, notes):
     take_snapshot(cur, label, actor["name"])
     cur.execute("SELECT id, shared FROM users WHERE shared IS NOT NULL")
     shared_now = {r["shared"]: r["id"] for r in cur.fetchall()}
+    cur.execute("SELECT id, pin_hash FROM users WHERE shared IS NULL AND pin_hash IS NOT NULL")
+    pins = [(r["pin_hash"], r["id"]) for r in cur.fetchall()]          # personal PINs survive a restore
     cur.execute("TRUNCATE equipment, cards, storages, rooms")
     cur.execute("DELETE FROM users WHERE shared IS NULL")
 
@@ -887,6 +960,9 @@ def replace_all(cur, data, keep_history, actor, label, notes):
             vals.update(shared=None, role="staff")
             users.append((rid, vals, extra))
     insert_rows(cur, "users", users, "insert")
+    if pins:
+        psycopg2.extras.execute_batch(cur, "UPDATE users SET pin_hash = %s WHERE id = %s AND shared IS NULL", pins)
+    drop_stale_pins(cur)
 
     present = {}
     for t in HALL:
